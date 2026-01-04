@@ -1,17 +1,16 @@
-const { Telegraf, Markup } = require('telegraf');
+const { Telegraf } = require('telegraf');
 const fs = require('fs');
 const config = require('./config');
 const logger = require('./logger');
 const database = require('./database');
 const orgSearch = require('./org-search');
 const studentIdGen = require('./student-id-generator');
-const SheerIDAPI = require('./sheerid-api');
 const SheerIDAutomation = require('./sheerid-automation');
 
 const bot = new Telegraf(config.TELEGRAM_BOT_TOKEN);
 const userSessions = new Map();
 
-// Session cleanup untuk prevent memory leak
+// Session management
 function getSession(userId) {
   if (!userSessions.has(userId)) {
     userSessions.set(userId, {
@@ -57,6 +56,7 @@ async function notifyAdmins(message, extra = {}) {
   }
 }
 
+// Commands
 bot.command('start', async (ctx) => {
   const session = getSession(ctx.from.id);
   session.step = 'idle';
@@ -198,6 +198,7 @@ Total verifikasi Anda: ${verifications.length}
   }
 });
 
+// Message handlers
 bot.on('text', async (ctx) => {
   const session = getSession(ctx.from.id);
   const text = ctx.message.text;
@@ -518,68 +519,43 @@ Negara: ${session.data.countryName}
 }
 
 async function startVerificationProcess(ctx, session) {
-  const api = new SheerIDAPI();
   const automation = new SheerIDAutomation();
   let status = 'failed';
   let message = 'Unknown error';
 
   try {
-    // ========================================
-    // STEP 1: Submit via API
-    // ========================================
-    await ctx.reply('🌐 Step 1/5: Mengirim data via API...');
-    
-    const apiResult = await api.submitVerification({
-      accountId: session.data.accountId,
-      verificationId: session.data.verificationId,
-      universityId: session.data.universityId,
+    // Step 1: Initialize & navigate
+    await ctx.reply('🌐 Step 1/5: Membuka browser...');
+    await automation.initialize();
+    await automation.navigateToVerificationPage(session.data.url);
+    logger.info('Browser initialized and navigated', { userId: ctx.from.id });
+
+    // Step 2: Fill form
+    await ctx.reply('📝 Step 2/5: Mengisi formulir...');
+    await automation.fillCompleteForm({
       universityName: session.data.universityName,
       firstName: session.data.firstName,
       lastName: session.data.lastName,
       email: session.data.email,
-      birthDate: session.data.birthDate,
-      country: session.data.country
+      birthDate: session.data.birthDate
+    });
+    logger.info('Form filled and submitted', { userId: ctx.from.id });
+
+    // Step 3: Trigger upload
+    await ctx.reply('🔄 Step 3/5: Memicu opsi upload dokumen...');
+    const triggerResult = await automation.triggerDocumentUpload();
+    logger.info('Upload trigger result', { 
+      result: triggerResult, 
+      userId: ctx.from.id 
     });
 
-    if (apiResult.success) {
-      logger.info('API submission successful', { userId: ctx.from.id });
-      await ctx.reply('✅ Data berhasil dikirim via API!');
-    } else {
-      logger.warn('API submission failed, continuing with browser', { userId: ctx.from.id });
-      await ctx.reply('⚠️ API gagal, melanjutkan dengan browser...');
-    }
-
-    // ========================================
-    // STEP 2: Open browser
-    // ========================================
-    await ctx.reply('🌐 Step 2/5: Membuka browser...');
-    await automation.initialize();
-    logger.info('Browser initialized', { userId: ctx.from.id });
-
-    await automation.navigateToVerificationPage(session.data.url);
-    logger.info('Navigated to verification page', { userId: ctx.from.id });
-
-    // ========================================
-    // STEP 3: Trigger document upload
-    // ========================================
-    await ctx.reply('🔄 Step 3/5: Memicu opsi upload dokumen...');
-    
-    const triggerResult = await automation.triggerDocumentUpload();
-    
     if (triggerResult.triggered) {
-      logger.info('Document upload triggered', { 
-        method: triggerResult.method, 
-        userId: ctx.from.id 
-      });
-      await ctx.reply(`✅ Upload dokumen siap!`);
+      await ctx.reply(`✅ Upload dokumen siap! (${triggerResult.method})`);
     } else {
-      logger.warn('Failed to trigger upload, trying direct upload', { userId: ctx.from.id });
-      await ctx.reply('⚠️ Mencoba upload langsung...');
+      await ctx.reply('⚠️ Portal tidak ditemukan, mencoba upload langsung...');
     }
 
-    // ========================================
-    // STEP 4: Generate & Upload Student ID
-    // ========================================
+    // Step 4: Generate Student ID
     await ctx.reply('🎓 Step 4/5: Generate student ID...');
     
     const studentIdResult = await studentIdGen.generate({
@@ -601,22 +577,21 @@ async function startVerificationProcess(ctx, session) {
       { caption: `✅ Student ID berhasil di-generate!\n🌍 ${session.data.countryName}` }
     );
 
-    await ctx.reply('📤 Uploading student ID...');
+    // Step 5: Upload document
+    await ctx.reply('📤 Step 5/5: Uploading student ID...');
     await automation.uploadDocument(studentIdResult.buffer);
     logger.info('Document uploaded', { userId: ctx.from.id });
 
-    // ========================================
-    // STEP 5: Check Status
-    // ========================================
-    await ctx.reply('⏳ Step 5/5: Mengecek status verifikasi...');
+    // Check status
+    await ctx.reply('⏳ Mengecek status verifikasi...');
     await automation.page.waitForTimeout(3000);
 
     const verificationStatus = await automation.checkVerificationStatus();
     status = verificationStatus.status;
     message = verificationStatus.message;
 
-    // Screenshot hasil
-    const screenshotPath = `/tmp/verification_${ctx.from.id}_${Date.now()}.png`;
+    // Screenshot
+    const screenshotPath = `/tmp/final_${ctx.from.id}_${Date.now()}.png`;
     await automation.screenshot(screenshotPath);
 
     try {
@@ -626,12 +601,10 @@ async function startVerificationProcess(ctx, session) {
       );
       fs.unlinkSync(screenshotPath);
     } catch (e) {
-      logger.warn('Failed to send screenshot', { error: e.message });
+      logger.warn('Screenshot send failed', { error: e.message });
     }
 
-    // ========================================
-    // Result Message
-    // ========================================
+    // Result message
     const statusEmoji = {
       'success': '✅',
       'pending': '⏳',
@@ -665,7 +638,7 @@ Verification ID: ${session.data.verificationId}
         verificationId: session.data.verificationId
       });
     } catch (dbError) {
-      logger.error('Failed to save to database', { error: dbError.message });
+      logger.error('Database save failed', { error: dbError.message });
     }
 
     // Notify admins
@@ -712,6 +685,7 @@ Verification ID: ${session.data.verificationId}
   }
 }
 
+// Error handler
 bot.catch((err, ctx) => {
   logger.error('Bot error', {
     error: err.message,
@@ -724,6 +698,7 @@ bot.catch((err, ctx) => {
   }
 });
 
+// Launch bot
 bot.launch({
   dropPendingUpdates: true
 }).then(() => {
@@ -734,6 +709,7 @@ bot.launch({
   process.exit(1);
 });
 
+// Graceful shutdown
 process.once('SIGINT', () => {
   logger.info('SIGINT received, stopping bot...');
   bot.stop('SIGINT');

@@ -9,14 +9,13 @@ class SheerIDAPI {
   /**
    * Submit verification form via API
    */
-  async submitVerificationForm(data) {
+  async submitVerification(verificationId, data) {
     try {
-      logger.info('Submitting form via API', {
-        verificationId: data.verificationId,
-        country: data.country
+      logger.info('Submitting verification via API', {
+        verificationId,
+        university: data.universityName
       });
 
-      // Step 1: Collect personal info
       const payload = {
         firstName: data.firstName,
         lastName: data.lastName,
@@ -26,7 +25,7 @@ class SheerIDAPI {
       };
 
       const response = await axios.post(
-        `${this.baseURL}/verification/${data.verificationId}/step/collectStudentPersonalInfo`,
+        `${this.baseURL}/verification/${verificationId}/step/collectStudentPersonalInfo`,
         payload,
         {
           headers: {
@@ -38,9 +37,10 @@ class SheerIDAPI {
         }
       );
 
-      logger.success('Form submitted via API', {
-        verificationId: data.verificationId,
-        currentStep: response.data?.currentStep
+      logger.success('✅ Form submitted via API', {
+        verificationId,
+        currentStep: response.data?.currentStep,
+        awaitingStep: response.data?.awaitingStep
       });
 
       return {
@@ -51,7 +51,8 @@ class SheerIDAPI {
       };
 
     } catch (error) {
-      logger.error('API form submission failed', {
+      logger.error('❌ API form submission failed', {
+        verificationId,
         error: error.message,
         response: error.response?.data
       });
@@ -59,13 +60,13 @@ class SheerIDAPI {
       return {
         success: false,
         error: error.message,
-        fallbackToBrowser: true
+        response: error.response?.data
       };
     }
   }
 
   /**
-   * Check verification status
+   * Get verification status
    */
   async getStatus(verificationId) {
     try {
@@ -80,6 +81,12 @@ class SheerIDAPI {
         }
       );
 
+      logger.info('Status retrieved', {
+        verificationId,
+        currentStep: response.data?.currentStep,
+        awaitingStep: response.data?.awaitingStep
+      });
+
       return {
         success: true,
         currentStep: response.data?.currentStep,
@@ -88,7 +95,7 @@ class SheerIDAPI {
       };
 
     } catch (error) {
-      logger.error('Failed to get status', { error: error.message });
+      logger.error('Failed to get status', { verificationId, error: error.message });
       return { success: false, error: error.message };
     }
   }

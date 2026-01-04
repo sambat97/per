@@ -7,7 +7,6 @@ const studentIdGen = require('./student-id-generator');
 const SheerIDAutomation = require('./sheerid-automation');
 
 const bot = new Telegraf(config.TELEGRAM_BOT_TOKEN);
-
 const userSessions = new Map();
 
 function getSession(userId) {
@@ -53,7 +52,7 @@ Bot ini membantu Anda melakukan verifikasi mahasiswa secara otomatis.
 /help - Bantuan
 
 Silakan gunakan /verify untuk memulai!
-  `;
+`;
 
   await ctx.replyWithMarkdown(welcomeMessage);
   logger.info('User started bot', { userId: ctx.from.id, username: ctx.from.username });
@@ -69,7 +68,7 @@ bot.command('help', async (ctx) => {
 3. Ketik nama universitas
 4. Pilih universitas dari daftar
 5. Masukkan nama depan
-6. Masukkan nama belakang  
+6. Masukkan nama belakang
 7. Masukkan tanggal lahir (format: YYYY-MM-DD)
 8. Masukkan email
 9. Bot akan otomatis memproses verifikasi
@@ -83,7 +82,7 @@ bot.command('help', async (ctx) => {
 - Format tanggal: YYYY-MM-DD (contoh: 2000-05-15)
 - Email harus valid
 - Bot auto-detect negara dari URL
-  `;
+`;
 
   await ctx.replyWithMarkdown(helpMessage);
 });
@@ -103,7 +102,7 @@ Total: ${stats.total}
 ❌ Gagal: ${stats.failed}
 
 Success Rate: ${stats.total > 0 ? ((stats.success / stats.total) * 100).toFixed(2) : 0}%
-  `;
+`;
 
   await ctx.replyWithMarkdown(message);
 });
@@ -112,7 +111,7 @@ bot.command('cancel', async (ctx) => {
   const session = getSession(ctx.from.id);
   session.step = 'idle';
   session.data = {};
-  
+
   await ctx.reply('❌ Proses dibatalkan. Gunakan /verify untuk memulai lagi.');
   logger.info('User canceled process', { userId: ctx.from.id });
 });
@@ -134,7 +133,7 @@ bot.command('verify', async (ctx) => {
 
 bot.command('status', async (ctx) => {
   const verifications = database.getVerificationsByUser(ctx.from.id);
-  
+
   if (verifications.length === 0) {
     return ctx.reply('📭 Anda belum memiliki riwayat verifikasi.');
   }
@@ -156,7 +155,7 @@ Negara: ${lastVerification.countryName || '-'}
 Waktu: ${new Date(lastVerification.timestamp).toLocaleString('id-ID')}
 
 Total verifikasi Anda: ${verifications.length}
-  `;
+`;
 
   await ctx.replyWithMarkdown(message);
 });
@@ -170,50 +169,47 @@ bot.on('text', async (ctx) => {
       case 'waiting_url':
         await handleURL(ctx, session, text);
         break;
-
       case 'waiting_university_name':
         await handleUniversitySearch(ctx, session, text);
         break;
-
       case 'waiting_university_selection':
         await handleUniversitySelection(ctx, session, text);
         break;
-
       case 'waiting_first_name':
         await handleFirstName(ctx, session, text);
         break;
-
       case 'waiting_last_name':
         await handleLastName(ctx, session, text);
         break;
-
       case 'waiting_birth_date':
         await handleBirthDate(ctx, session, text);
         break;
-
       case 'waiting_email':
         await handleEmail(ctx, session, text);
         break;
-
       default:
         await ctx.reply(
           '❓ Saya tidak mengerti. Gunakan /verify untuk memulai verifikasi atau /help untuk bantuan.'
         );
     }
   } catch (error) {
-    logger.error('Error handling message', { 
-      userId: ctx.from.id, 
-      step: session.step, 
-      error: error.message 
+    logger.error('Error handling message', {
+      userId: ctx.from.id,
+      step: session.step,
+      error: error.message
     });
-    
+
     await ctx.reply(
       '❌ Terjadi kesalahan. Silakan coba lagi atau gunakan /cancel untuk membatalkan.'
     );
   }
 });
 
+// ============================================
+// FUNGSI INI YANG SUDAH DIPERBAIKI
+// ============================================
 async function handleURL(ctx, session, text) {
+  // Validasi dasar
   if (!text.includes('sheerid.com')) {
     return ctx.reply(
       '❌ URL tidak valid. Pastikan URL dari SheerID.\n\n' +
@@ -221,27 +217,29 @@ async function handleURL(ctx, session, text) {
     );
   }
 
-  const verificationIdMatch = text.match(/verificationId=([a-f0-9-]+)/i);
+  // Extract Account/Program ID dari path URL (WAJIB)
   const accountIdMatch = text.match(/\/verify\/([a-f0-9]+)/i);
-  const countryMatch = text.match(/[?&]country=([A-Z]{2})/i);
-  const localeMatch = text.match(/[?&]locale=([a-z]{2})/i);
-
-  if (!verificationIdMatch) {
-    return ctx.reply('❌ Verification ID tidak ditemukan dalam URL.');
-  }
-
   if (!accountIdMatch) {
     return ctx.reply('❌ Account ID tidak ditemukan dalam URL.');
   }
 
+  // Extract verificationId dari parameter (OPSIONAL, fallback ke accountId)
+  const verificationIdMatch = text.match(/verificationId=([a-f0-9-]+)/i);
+  const verificationId = verificationIdMatch ? verificationIdMatch[1] : accountIdMatch[1];
+  const accountId = accountIdMatch[1];
+
+  // Extract country dan locale
+  const countryMatch = text.match(/[?&]country=([A-Z]{2})/i);
+  const localeMatch = text.match(/[?&]locale=([a-z]{2})/i);
+
   let country = 'US';
   let countryName = 'United States';
-  
+
   if (countryMatch) {
     country = countryMatch[1].toUpperCase();
   } else if (localeMatch) {
     const localeToCountry = {
-      'id': 'ID', 'nl': 'NL', 'en': 'US', 'de': 'DE', 
+      'id': 'ID', 'nl': 'NL', 'en': 'US', 'de': 'DE',
       'fr': 'FR', 'es': 'ES', 'it': 'IT', 'pt': 'BR',
       'ja': 'JP', 'zh': 'CN', 'ko': 'KR'
     };
@@ -249,7 +247,7 @@ async function handleURL(ctx, session, text) {
   }
 
   const countryNames = {
-    'ID': 'Indonesia', 'NL': 'Netherlands', 'US': 'United States', 
+    'ID': 'Indonesia', 'NL': 'Netherlands', 'US': 'United States',
     'GB': 'United Kingdom', 'CA': 'Canada', 'AU': 'Australia',
     'DE': 'Germany', 'FR': 'France', 'ES': 'Spain', 'IT': 'Italy',
     'BR': 'Brazil', 'MX': 'Mexico', 'AR': 'Argentina', 'JP': 'Japan',
@@ -260,32 +258,34 @@ async function handleURL(ctx, session, text) {
 
   const countryId = config.COUNTRY_MAPPING[country] || 129;
 
+  // Simpan ke session
   session.data.url = text;
-  session.data.verificationId = verificationIdMatch[1];
-  session.data.accountId = accountIdMatch[1];
+  session.data.verificationId = verificationId;
+  session.data.accountId = accountId;
   session.data.country = country;
   session.data.countryName = countryName;
   session.data.countryId = countryId;
-  
-  logger.info('URL parsed successfully', { 
-    userId: ctx.from.id, 
-    verificationId: session.data.verificationId,
-    accountId: session.data.accountId,
+
+  logger.info('URL parsed successfully', {
+    userId: ctx.from.id,
+    verificationId: verificationId,
+    accountId: accountId,
     country: country,
     countryId: countryId
   });
 
   session.step = 'waiting_university_name';
-  
+
   await ctx.reply(
-    `✅ URL tersimpan!\n\n` +
+    `✅ *URL tersimpan!*\n\n` +
     `🌍 Negara: *${countryName}* (${country})\n` +
-    `🆔 Account ID: \`${session.data.accountId}\`\n\n` +
+    `🆔 Account ID: \`${accountId}\`\n\n` +
     `🏫 Sekarang ketik nama universitas Anda untuk mencari.\n\n` +
     `Contoh: tilburg university`,
     { parse_mode: 'Markdown' }
   );
 }
+// ============================================
 
 async function handleUniversitySearch(ctx, session, text) {
   if (text.length < 2) {
@@ -324,8 +324,8 @@ async function handleUniversitySearch(ctx, session, text) {
     await ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id);
 
     const orgList = organizations.slice(0, 10).map((org, index) => {
-      const location = org.city && org.state 
-        ? `${org.city}, ${org.state}` 
+      const location = org.city && org.state
+        ? `${org.city}, ${org.state}`
         : org.city || org.state || '';
       return `${index + 1}. ${org.name}${location ? ` - ${location}` : ''}`;
     }).join('\n');
@@ -336,8 +336,8 @@ async function handleUniversitySearch(ctx, session, text) {
       { parse_mode: 'Markdown' }
     );
 
-    logger.info('Organizations found', { 
-      userId: ctx.from.id, 
+    logger.info('Organizations found', {
+      userId: ctx.from.id,
       count: organizations.length,
       query: text,
       country: session.data.country
@@ -345,12 +345,13 @@ async function handleUniversitySearch(ctx, session, text) {
 
   } catch (error) {
     await ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id);
-    logger.error('Organization search failed', { 
-      userId: ctx.from.id, 
+
+    logger.error('Organization search failed', {
+      userId: ctx.from.id,
       error: error.message,
       country: session.data.country
     });
-    
+
     await ctx.reply(
       `❌ Gagal mencari universitas.\n\n` +
       `Error: ${error.message}\n\n` +
@@ -359,7 +360,7 @@ async function handleUniversitySearch(ctx, session, text) {
       `• Country code benar (${session.data.country})\n` +
       `• Universitas ada di negara tersebut`
     );
-    
+
     session.step = 'waiting_university_name';
   }
 }
@@ -378,8 +379,8 @@ async function handleUniversitySelection(ctx, session, text) {
   session.data.universityName = selectedOrg.name;
   session.data.universityId = selectedOrg.id;
 
-  logger.info('University selected', { 
-    userId: ctx.from.id, 
+  logger.info('University selected', {
+    userId: ctx.from.id,
     university: selectedOrg.name,
     universityId: selectedOrg.id
   });
@@ -431,7 +432,7 @@ async function handleLastName(ctx, session, text) {
 
 async function handleBirthDate(ctx, session, text) {
   const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-  
+
   if (!dateRegex.test(text)) {
     return ctx.reply(
       '❌ Format tanggal salah!\n\n' +
@@ -459,16 +460,16 @@ async function handleBirthDate(ctx, session, text) {
 
 async function handleEmail(ctx, session, text) {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  
+
   if (!emailRegex.test(text)) {
     return ctx.reply('❌ Format email tidak valid.');
   }
 
   session.data.email = text.trim();
 
-  logger.info('Email saved, starting verification', { 
-    userId: ctx.from.id, 
-    email: text 
+  logger.info('Email saved, starting verification', {
+    userId: ctx.from.id,
+    email: text
   });
 
   const summary = `
@@ -481,10 +482,9 @@ Universitas: ${session.data.universityName}
 Negara: ${session.data.countryName}
 
 🚀 Memulai proses verifikasi otomatis...
-  `;
+`;
 
   await ctx.replyWithMarkdown(summary);
-
   await startVerificationProcess(ctx, session);
 }
 
@@ -524,7 +524,6 @@ async function startVerificationProcess(ctx, session) {
     logger.info('Portal clicked and returned', { userId: ctx.from.id });
 
     await ctx.reply('🎓 Step 7/7: Generate & upload student ID...');
-    
     const studentIdResult = await studentIdGen.generate({
       firstName: session.data.firstName,
       lastName: session.data.lastName,
@@ -537,7 +536,7 @@ async function startVerificationProcess(ctx, session) {
       throw new Error('Failed to generate student ID');
     }
 
-    logger.info('Student ID generated', { 
+    logger.info('Student ID generated', {
       userId: ctx.from.id,
       country: session.data.country,
       countryId: session.data.countryId
@@ -560,7 +559,7 @@ async function startVerificationProcess(ctx, session) {
 
     const screenshotPath = `/tmp/verification_${ctx.from.id}_${Date.now()}.png`;
     await automation.screenshot(screenshotPath);
-    
+
     try {
       await ctx.replyWithPhoto(
         { source: require('fs').readFileSync(screenshotPath) },
@@ -586,7 +585,7 @@ Nama: ${session.data.firstName} ${session.data.lastName}
 Universitas: ${session.data.universityName}
 Negara: ${session.data.countryName}
 Verification ID: ${session.data.verificationId}
-    `;
+`;
 
     await ctx.replyWithMarkdown(resultMessage);
 
@@ -614,8 +613,8 @@ Verification ID: ${session.data.verificationId}
     logger.logVerification(ctx.from.id, ctx.from.username, status, session.data);
 
   } catch (error) {
-    logger.error('Verification process failed', { 
-      userId: ctx.from.id, 
+    logger.error('Verification process failed', {
+      userId: ctx.from.id,
       error: error.message,
       stack: error.stack
     });
@@ -641,12 +640,12 @@ Verification ID: ${session.data.verificationId}
 }
 
 bot.catch((err, ctx) => {
-  logger.error('Bot error', { 
-    error: err.message, 
+  logger.error('Bot error', {
+    error: err.message,
     userId: ctx?.from?.id,
     stack: err.stack
   });
-  
+
   if (ctx) {
     ctx.reply('❌ Terjadi kesalahan internal. Silakan coba lagi nanti.').catch(() => {});
   }

@@ -10,7 +10,9 @@ const SheerIDAutomation = require('./sheerid-automation');
 const bot = new Telegraf(config.TELEGRAM_BOT_TOKEN);
 const userSessions = new Map();
 
-// Session management
+// ============================================
+// SESSION MANAGEMENT
+// ============================================
 function getSession(userId) {
   if (!userSessions.has(userId)) {
     userSessions.set(userId, {
@@ -26,6 +28,13 @@ function getSession(userId) {
   return session;
 }
 
+function clearSession(userId) {
+  if (userSessions.has(userId)) {
+    userSessions.delete(userId);
+    logger.info('Session cleared', { userId });
+  }
+}
+
 // Cleanup inactive sessions every 30 minutes
 setInterval(() => {
   const now = Date.now();
@@ -39,13 +48,6 @@ setInterval(() => {
   }
 }, 1800000);
 
-function clearSession(userId) {
-  if (userSessions.has(userId)) {
-    userSessions.delete(userId);
-    logger.info('Session cleared', { userId });
-  }
-}
-
 async function notifyAdmins(message, extra = {}) {
   for (const adminId of config.ADMIN_IDS) {
     try {
@@ -56,7 +58,9 @@ async function notifyAdmins(message, extra = {}) {
   }
 }
 
-// Commands
+// ============================================
+// COMMANDS
+// ============================================
 bot.command('start', async (ctx) => {
   const session = getSession(ctx.from.id);
   session.step = 'idle';
@@ -77,12 +81,12 @@ Bot ini membantu Anda melakukan verifikasi mahasiswa secara otomatis.
 *Perintah:*
 /verify - Mulai verifikasi baru
 /status - Cek status verifikasi terakhir
-/help - Bantuan
+/help - Bantuan lengkap
 
 Silakan gunakan /verify untuk memulai!
 `;
 
-  await ctx.reply(welcomeMessage, { parseMode: 'Markdown' });
+  await ctx.reply(welcomeMessage, { parse_mode: 'Markdown' });
   logger.info('User started bot', { userId: ctx.from.id, username: ctx.from.username });
 });
 
@@ -104,15 +108,16 @@ bot.command('help', async (ctx) => {
 *Perintah Lain:*
 /cancel - Batalkan proses
 /status - Lihat riwayat verifikasi
+/stats - Statistik bot (admin only)
 
 *Catatan:*
 - Pastikan URL SheerID valid
-- Format tanggal: YYYY-MM-DD (contoh: 2000-05-15)
+- Format tanggal: YYYY-MM-DD (contoh: 2003-01-21)
 - Email harus valid
 - Bot auto-detect negara dari URL
 `;
 
-  await ctx.reply(helpMessage, { parseMode: 'Markdown' });
+  await ctx.reply(helpMessage, { parse_mode: 'Markdown' });
 });
 
 bot.command('stats', async (ctx) => {
@@ -133,7 +138,7 @@ Total: ${stats.total}
 Success Rate: ${stats.total > 0 ? ((stats.success / stats.total) * 100).toFixed(2) : 0}%
 `;
 
-    await ctx.reply(message, { parseMode: 'Markdown' });
+    await ctx.reply(message, { parse_mode: 'Markdown' });
   } catch (error) {
     logger.error('Failed to get stats', { error: error.message });
     await ctx.reply('❌ Gagal mengambil statistik.');
@@ -191,14 +196,16 @@ Waktu: ${new Date(lastVerification.timestamp).toLocaleString('id-ID')}
 Total verifikasi Anda: ${verifications.length}
 `;
 
-    await ctx.reply(message, { parseMode: 'Markdown' });
+    await ctx.reply(message, { parse_mode: 'Markdown' });
   } catch (error) {
     logger.error('Failed to get status', { error: error.message });
     await ctx.reply('❌ Gagal mengambil status verifikasi.');
   }
 });
 
-// Message handlers
+// ============================================
+// MESSAGE HANDLERS
+// ============================================
 bot.on('text', async (ctx) => {
   const session = getSession(ctx.from.id);
   const text = ctx.message.text;
@@ -244,6 +251,9 @@ bot.on('text', async (ctx) => {
   }
 });
 
+// ============================================
+// HANDLER FUNCTIONS
+// ============================================
 async function handleURL(ctx, session, text) {
   if (!text.includes('sheerid.com')) {
     return ctx.reply(
@@ -313,7 +323,7 @@ async function handleURL(ctx, session, text) {
     `🆔 Account ID: \`${accountId}\`\n\n` +
     `🏫 Sekarang ketik nama universitas Anda untuk mencari.\n\n` +
     `Contoh: universitas brawijaya`,
-    { parseMode: 'Markdown' }
+    { parse_mode: 'Markdown' }
   );
 }
 
@@ -344,7 +354,7 @@ async function handleUniversitySearch(ctx, session, text) {
       return ctx.reply(
         `❌ Universitas tidak ditemukan di *${session.data.countryName}*.\n\n` +
         `Coba dengan kata kunci lain atau pastikan country code di URL benar.`,
-        { parseMode: 'Markdown' }
+        { parse_mode: 'Markdown' }
       );
     }
 
@@ -363,7 +373,7 @@ async function handleUniversitySearch(ctx, session, text) {
     await ctx.reply(
       `📚 *Daftar Universitas Ditemukan (${session.data.countryName}):*\n\n${orgList}\n\n` +
       '💡 Balas dengan nomor universitas yang Anda pilih (contoh: 1)',
-      { parseMode: 'Markdown' }
+      { parse_mode: 'Markdown' }
     );
 
     logger.info('Organizations found', {
@@ -420,7 +430,7 @@ async function handleUniversitySelection(ctx, session, text) {
   await ctx.reply(
     `✅ Universitas dipilih: *${selectedOrg.name}*\n\n` +
     '👤 Sekarang masukkan *NAMA DEPAN* Anda:',
-    { parseMode: 'Markdown' }
+    { parse_mode: 'Markdown' }
   );
 }
 
@@ -435,7 +445,7 @@ async function handleFirstName(ctx, session, text) {
   await ctx.reply(
     `✅ Nama depan: ${text}\n\n` +
     '👤 Sekarang masukkan *NAMA BELAKANG* Anda:',
-    { parseMode: 'Markdown' }
+    { parse_mode: 'Markdown' }
   );
 
   logger.info('First name saved', { userId: ctx.from.id, firstName: text });
@@ -453,8 +463,8 @@ async function handleLastName(ctx, session, text) {
     `✅ Nama belakang: ${text}\n\n` +
     '📅 Masukkan *TANGGAL LAHIR* Anda:\n\n' +
     'Format: YYYY-MM-DD\n' +
-    'Contoh: 2000-05-15',
-    { parseMode: 'Markdown' }
+    'Contoh: 2003-01-21',
+    { parse_mode: 'Markdown' }
   );
 
   logger.info('Last name saved', { userId: ctx.from.id, lastName: text });
@@ -467,7 +477,7 @@ async function handleBirthDate(ctx, session, text) {
     return ctx.reply(
       '❌ Format tanggal salah!\n\n' +
       'Gunakan format: YYYY-MM-DD\n' +
-      'Contoh: 2000-05-15'
+      'Contoh: 2003-01-21'
     );
   }
 
@@ -482,7 +492,7 @@ async function handleBirthDate(ctx, session, text) {
   await ctx.reply(
     `✅ Tanggal lahir: ${text}\n\n` +
     '📧 Masukkan *EMAIL* Anda:',
-    { parseMode: 'Markdown' }
+    { parse_mode: 'Markdown' }
   );
 
   logger.info('Birth date saved', { userId: ctx.from.id, birthDate: text });
@@ -514,24 +524,27 @@ Negara: ${session.data.countryName}
 🚀 Memulai proses verifikasi otomatis...
 `;
 
-  await ctx.reply(summary, { parseMode: 'Markdown' });
+  await ctx.reply(summary, { parse_mode: 'Markdown' });
   await startVerificationProcess(ctx, session);
 }
 
+// ============================================
+// VERIFICATION PROCESS
+// ============================================
 async function startVerificationProcess(ctx, session) {
   const automation = new SheerIDAutomation();
   let status = 'failed';
   let message = 'Unknown error';
 
   try {
-    // Step 1: Initialize & navigate
-    await ctx.reply('🌐 Step 1/5: Membuka browser...');
+    // Step 1: Open Browser
+    await ctx.reply('🌐 Step 1/4: Membuka browser...');
     await automation.initialize();
     await automation.openVerificationPage(session.data.url);
     logger.info('Browser opened', { userId: ctx.from.id });
 
-    // Step 2: Trigger upload
-    await ctx.reply('🔄 Step 2/5: Memicu opsi upload dokumen...');
+    // Step 2: Trigger Upload
+    await ctx.reply('🔄 Step 2/4: Memicu opsi upload dokumen...');
     const triggerResult = await automation.triggerDocumentUpload();
     
     if (triggerResult.triggered) {
@@ -543,7 +556,7 @@ async function startVerificationProcess(ctx, session) {
     }
 
     // Step 3: Generate Student ID
-    await ctx.reply('🎓 Step 3/5: Generate student ID...');
+    await ctx.reply('🎓 Step 3/4: Generate student ID card...');
     
     const studentIdResult = await studentIdGen.generate({
       firstName: session.data.firstName,
@@ -567,13 +580,13 @@ async function startVerificationProcess(ctx, session) {
       { caption: `✅ Student ID berhasil di-generate!\n🎓 ${session.data.universityName}\n🌍 ${session.data.countryName}` }
     );
 
-    // Step 4: Upload document
-    await ctx.reply('📤 Step 4/5: Uploading document...');
+    // Step 4: Upload Document
+    await ctx.reply('📤 Step 4/4: Uploading document...');
     await automation.uploadDocument(studentIdResult.buffer);
     logger.info('Document uploaded', { userId: ctx.from.id });
 
-    // Step 5: Check status
-    await ctx.reply('⏳ Step 5/5: Checking status...');
+    // Check status
+    await ctx.reply('⏳ Checking verification status...');
     await automation.page.waitForTimeout(3000);
 
     const verificationStatus = await automation.checkStatus();
@@ -607,7 +620,7 @@ Negara: ${session.data.countryName}
 Verification ID: ${session.data.verificationId}
 `;
 
-    await ctx.reply(resultMessage, { parseMode: 'Markdown' });
+    await ctx.reply(resultMessage, { parse_mode: 'Markdown' });
 
     // Save database
     try {
@@ -629,7 +642,12 @@ Verification ID: ${session.data.verificationId}
       `Name: ${session.data.firstName} ${session.data.lastName}`
     );
 
-    logger.logVerification(ctx.from.id, ctx.from.username, status, session.data);
+    logger.info('Verification completed', {
+      userId: ctx.from.id,
+      username: ctx.from.username,
+      status: status,
+      university: session.data.universityName
+    });
 
   } catch (error) {
     logger.error('Verification failed', { 
@@ -640,7 +658,7 @@ Verification ID: ${session.data.verificationId}
 
     await ctx.reply(
       `❌ *Verifikasi Gagal*\n\nError: ${error.message}\n\nCoba lagi: /verify`,
-      { parseMode: 'Markdown' }
+      { parse_mode: 'Markdown' }
     );
 
     try {
@@ -650,7 +668,7 @@ Verification ID: ${session.data.verificationId}
         ...session.data
       });
     } catch (dbError) {
-      logger.error('Failed to save error');
+      logger.error('Failed to save error to database');
     }
 
   } finally {
@@ -661,7 +679,9 @@ Verification ID: ${session.data.verificationId}
   }
 }
 
-// Error handler
+// ============================================
+// ERROR HANDLER & LAUNCH
+// ============================================
 bot.catch((err, ctx) => {
   logger.error('Bot error', {
     error: err.message,
@@ -678,10 +698,10 @@ bot.catch((err, ctx) => {
 bot.launch({
   dropPendingUpdates: true
 }).then(() => {
-  logger.success('Bot started successfully');
+  logger.success('✅ Bot started successfully');
   console.log('🤖 Bot is running...');
 }).catch((error) => {
-  logger.error('Failed to start bot', { error: error.message });
+  logger.error('❌ Failed to start bot', { error: error.message });
   process.exit(1);
 });
 

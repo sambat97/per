@@ -1,4 +1,4 @@
-# Update ke versi yang match dengan package.json
+# Base image Playwright official
 FROM mcr.microsoft.com/playwright:v1.41.2-jammy
 
 # Set working directory
@@ -7,8 +7,8 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --omit=dev
+# UBAH INI: npm ci → npm install
+RUN npm install --omit=dev --no-package-lock
 
 # Copy all files
 COPY . .

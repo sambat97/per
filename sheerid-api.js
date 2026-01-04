@@ -24,6 +24,8 @@ class SheerIDAPI {
         organization: data.universityId
       };
 
+      logger.debug('API payload', payload);
+
       const response = await axios.post(
         `${this.baseURL}/verification/${verificationId}/step/collectStudentPersonalInfo`,
         payload,

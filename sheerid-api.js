@@ -16,20 +16,23 @@ class SheerIDAPI {
         university: data.universityName
       });
 
-      // ✅ FIX: organization harus object, bukan integer
+      // ✅ Format sesuai Python bot yang sukses
       const payload = {
         firstName: data.firstName,
         lastName: data.lastName,
         email: data.email,
         birthDate: data.birthDate,
         organization: {
-          id: data.universityId,  // ✅ Wrap dalam object
+          id: parseInt(data.universityId),  // ✅ Must be integer
           name: data.universityName
-        }
+        },
+        deviceFingerprintHash: this._generateDeviceFingerprint(),
+        locale: 'id'  // ✅ Indonesian locale
       };
 
       logger.debug('API payload', payload);
 
+      // ✅ Endpoint untuk STUDENT (bukan teacher)
       const response = await axios.post(
         `${this.baseURL}/verification/${verificationId}/step/collectStudentPersonalInfo`,
         payload,
@@ -104,6 +107,18 @@ class SheerIDAPI {
       logger.error('Failed to get status', { verificationId, error: error.message });
       return { success: false, error: error.message };
     }
+  }
+
+  /**
+   * Generate device fingerprint (random)
+   */
+  _generateDeviceFingerprint() {
+    const chars = '0123456789abcdef';
+    let result = '';
+    for (let i = 0; i < 32; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
   }
 }
 

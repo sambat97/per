@@ -1,5 +1,5 @@
 # Update ke versi yang match dengan package.json
-FROM mcr.microsoft.com/playwright/python:v1.48.0-jammy
+FROM mcr.microsoft.com/playwright:v1.41.2-jammy
 
 # Set working directory
 WORKDIR /app

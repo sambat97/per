@@ -1,22 +1,50 @@
 const { Telegraf, Markup } = require('telegraf');
+const fs = require('fs');
 const config = require('./config');
 const logger = require('./logger');
 const database = require('./database');
 const orgSearch = require('./org-search');
 const studentIdGen = require('./student-id-generator');
+const SheerIDAPI = require('./sheerid-api');
 const SheerIDAutomation = require('./sheerid-automation');
 
 const bot = new Telegraf(config.TELEGRAM_BOT_TOKEN);
 const userSessions = new Map();
 
+// Session cleanup untuk prevent memory leak
 function getSession(userId) {
   if (!userSessions.has(userId)) {
     userSessions.set(userId, {
       step: 'idle',
-      data: {}
+      data: {},
+      lastActivity: Date.now()
     });
   }
-  return userSessions.get(userId);
+  
+  const session = userSessions.get(userId);
+  session.lastActivity = Date.now();
+  
+  return session;
+}
+
+// Cleanup inactive sessions every 30 minutes
+setInterval(() => {
+  const now = Date.now();
+  const timeout = 3600000; // 1 hour
+  
+  for (const [userId, session] of userSessions.entries()) {
+    if (now - session.lastActivity > timeout) {
+      userSessions.delete(userId);
+      logger.info('Session cleaned up (timeout)', { userId });
+    }
+  }
+}, 1800000);
+
+function clearSession(userId) {
+  if (userSessions.has(userId)) {
+    userSessions.delete(userId);
+    logger.info('Session cleared', { userId });
+  }
 }
 
 async function notifyAdmins(message, extra = {}) {
@@ -54,7 +82,7 @@ Bot ini membantu Anda melakukan verifikasi mahasiswa secara otomatis.
 Silakan gunakan /verify untuk memulai!
 `;
 
-  await ctx.replyWithMarkdown(welcomeMessage);
+  await ctx.reply(welcomeMessage, { parseMode: 'Markdown' });
   logger.info('User started bot', { userId: ctx.from.id, username: ctx.from.username });
 });
 
@@ -84,7 +112,7 @@ bot.command('help', async (ctx) => {
 - Bot auto-detect negara dari URL
 `;
 
-  await ctx.replyWithMarkdown(helpMessage);
+  await ctx.reply(helpMessage, { parseMode: 'Markdown' });
 });
 
 bot.command('stats', async (ctx) => {
@@ -92,8 +120,9 @@ bot.command('stats', async (ctx) => {
     return ctx.reply('⛔ Perintah ini hanya untuk admin.');
   }
 
-  const stats = database.getStats();
-  const message = `
+  try {
+    const stats = database.getStats();
+    const message = `
 📊 *Statistik Verifikasi*
 
 Total: ${stats.total}
@@ -104,7 +133,11 @@ Total: ${stats.total}
 Success Rate: ${stats.total > 0 ? ((stats.success / stats.total) * 100).toFixed(2) : 0}%
 `;
 
-  await ctx.replyWithMarkdown(message);
+    await ctx.reply(message, { parseMode: 'Markdown' });
+  } catch (error) {
+    logger.error('Failed to get stats', { error: error.message });
+    await ctx.reply('❌ Gagal mengambil statistik.');
+  }
 });
 
 bot.command('cancel', async (ctx) => {
@@ -132,20 +165,21 @@ bot.command('verify', async (ctx) => {
 });
 
 bot.command('status', async (ctx) => {
-  const verifications = database.getVerificationsByUser(ctx.from.id);
+  try {
+    const verifications = database.getVerificationsByUser(ctx.from.id);
 
-  if (verifications.length === 0) {
-    return ctx.reply('📭 Anda belum memiliki riwayat verifikasi.');
-  }
+    if (verifications.length === 0) {
+      return ctx.reply('📭 Anda belum memiliki riwayat verifikasi.');
+    }
 
-  const lastVerification = verifications[verifications.length - 1];
-  const statusEmoji = {
-    'success': '✅',
-    'pending': '⏳',
-    'failed': '❌'
-  };
+    const lastVerification = verifications[verifications.length - 1];
+    const statusEmoji = {
+      'success': '✅',
+      'pending': '⏳',
+      'failed': '❌'
+    };
 
-  const message = `
+    const message = `
 📋 *Status Verifikasi Terakhir*
 
 Status: ${statusEmoji[lastVerification.status] || '❓'} ${lastVerification.status}
@@ -157,7 +191,11 @@ Waktu: ${new Date(lastVerification.timestamp).toLocaleString('id-ID')}
 Total verifikasi Anda: ${verifications.length}
 `;
 
-  await ctx.replyWithMarkdown(message);
+    await ctx.reply(message, { parseMode: 'Markdown' });
+  } catch (error) {
+    logger.error('Failed to get status', { error: error.message });
+    await ctx.reply('❌ Gagal mengambil status verifikasi.');
+  }
 });
 
 bot.on('text', async (ctx) => {
@@ -205,11 +243,7 @@ bot.on('text', async (ctx) => {
   }
 });
 
-// ============================================
-// FUNGSI INI YANG SUDAH DIPERBAIKI
-// ============================================
 async function handleURL(ctx, session, text) {
-  // Validasi dasar
   if (!text.includes('sheerid.com')) {
     return ctx.reply(
       '❌ URL tidak valid. Pastikan URL dari SheerID.\n\n' +
@@ -217,18 +251,15 @@ async function handleURL(ctx, session, text) {
     );
   }
 
-  // Extract Account/Program ID dari path URL (WAJIB)
   const accountIdMatch = text.match(/\/verify\/([a-f0-9]+)/i);
   if (!accountIdMatch) {
     return ctx.reply('❌ Account ID tidak ditemukan dalam URL.');
   }
 
-  // Extract verificationId dari parameter (OPSIONAL, fallback ke accountId)
   const verificationIdMatch = text.match(/verificationId=([a-f0-9-]+)/i);
   const verificationId = verificationIdMatch ? verificationIdMatch[1] : accountIdMatch[1];
   const accountId = accountIdMatch[1];
 
-  // Extract country dan locale
   const countryMatch = text.match(/[?&]country=([A-Z]{2})/i);
   const localeMatch = text.match(/[?&]locale=([a-z]{2})/i);
 
@@ -258,7 +289,6 @@ async function handleURL(ctx, session, text) {
 
   const countryId = config.COUNTRY_MAPPING[country] || 129;
 
-  // Simpan ke session
   session.data.url = text;
   session.data.verificationId = verificationId;
   session.data.accountId = accountId;
@@ -282,10 +312,9 @@ async function handleURL(ctx, session, text) {
     `🆔 Account ID: \`${accountId}\`\n\n` +
     `🏫 Sekarang ketik nama universitas Anda untuk mencari.\n\n` +
     `Contoh: tilburg university`,
-    { parse_mode: 'Markdown' }
+    { parseMode: 'Markdown' }
   );
 }
-// ============================================
 
 async function handleUniversitySearch(ctx, session, text) {
   if (text.length < 2) {
@@ -314,7 +343,7 @@ async function handleUniversitySearch(ctx, session, text) {
       return ctx.reply(
         `❌ Universitas tidak ditemukan di *${session.data.countryName}*.\n\n` +
         `Coba dengan kata kunci lain atau pastikan country code di URL benar.`,
-        { parse_mode: 'Markdown' }
+        { parseMode: 'Markdown' }
       );
     }
 
@@ -333,7 +362,7 @@ async function handleUniversitySearch(ctx, session, text) {
     await ctx.reply(
       `📚 *Daftar Universitas Ditemukan (${session.data.countryName}):*\n\n${orgList}\n\n` +
       '💡 Balas dengan nomor universitas yang Anda pilih (contoh: 1)',
-      { parse_mode: 'Markdown' }
+      { parseMode: 'Markdown' }
     );
 
     logger.info('Organizations found', {
@@ -390,7 +419,7 @@ async function handleUniversitySelection(ctx, session, text) {
   await ctx.reply(
     `✅ Universitas dipilih: *${selectedOrg.name}*\n\n` +
     '👤 Sekarang masukkan *NAMA DEPAN* Anda:',
-    { parse_mode: 'Markdown' }
+    { parseMode: 'Markdown' }
   );
 }
 
@@ -405,7 +434,7 @@ async function handleFirstName(ctx, session, text) {
   await ctx.reply(
     `✅ Nama depan: ${text}\n\n` +
     '👤 Sekarang masukkan *NAMA BELAKANG* Anda:',
-    { parse_mode: 'Markdown' }
+    { parseMode: 'Markdown' }
   );
 
   logger.info('First name saved', { userId: ctx.from.id, firstName: text });
@@ -424,7 +453,7 @@ async function handleLastName(ctx, session, text) {
     '📅 Masukkan *TANGGAL LAHIR* Anda:\n\n' +
     'Format: YYYY-MM-DD\n' +
     'Contoh: 2000-05-15',
-    { parse_mode: 'Markdown' }
+    { parseMode: 'Markdown' }
   );
 
   logger.info('Last name saved', { userId: ctx.from.id, lastName: text });
@@ -452,7 +481,7 @@ async function handleBirthDate(ctx, session, text) {
   await ctx.reply(
     `✅ Tanggal lahir: ${text}\n\n` +
     '📧 Masukkan *EMAIL* Anda:',
-    { parse_mode: 'Markdown' }
+    { parseMode: 'Markdown' }
   );
 
   logger.info('Birth date saved', { userId: ctx.from.id, birthDate: text });
@@ -484,46 +513,75 @@ Negara: ${session.data.countryName}
 🚀 Memulai proses verifikasi otomatis...
 `;
 
-  await ctx.replyWithMarkdown(summary);
+  await ctx.reply(summary, { parseMode: 'Markdown' });
   await startVerificationProcess(ctx, session);
 }
 
 async function startVerificationProcess(ctx, session) {
+  const api = new SheerIDAPI();
   const automation = new SheerIDAutomation();
   let status = 'failed';
   let message = 'Unknown error';
 
   try {
-    await ctx.reply('🌐 Step 1/7: Membuka browser...');
+    // ========================================
+    // STEP 1: Submit via API
+    // ========================================
+    await ctx.reply('🌐 Step 1/5: Mengirim data via API...');
+    
+    const apiResult = await api.submitVerification({
+      accountId: session.data.accountId,
+      verificationId: session.data.verificationId,
+      universityId: session.data.universityId,
+      universityName: session.data.universityName,
+      firstName: session.data.firstName,
+      lastName: session.data.lastName,
+      email: session.data.email,
+      birthDate: session.data.birthDate,
+      country: session.data.country
+    });
+
+    if (apiResult.success) {
+      logger.info('API submission successful', { userId: ctx.from.id });
+      await ctx.reply('✅ Data berhasil dikirim via API!');
+    } else {
+      logger.warn('API submission failed, continuing with browser', { userId: ctx.from.id });
+      await ctx.reply('⚠️ API gagal, melanjutkan dengan browser...');
+    }
+
+    // ========================================
+    // STEP 2: Open browser
+    // ========================================
+    await ctx.reply('🌐 Step 2/5: Membuka browser...');
     await automation.initialize();
     logger.info('Browser initialized', { userId: ctx.from.id });
 
-    await ctx.reply('🔗 Step 2/7: Membuka halaman verifikasi...');
-    await automation.navigateToVerificationURL(session.data.url);
+    await automation.navigateToVerificationPage(session.data.url);
     logger.info('Navigated to verification page', { userId: ctx.from.id });
 
-    await ctx.reply('🏫 Step 3/7: Memilih universitas...');
-    await automation.selectUniversity(session.data.universityName);
-    logger.info('University selected in form', { userId: ctx.from.id });
+    // ========================================
+    // STEP 3: Trigger document upload
+    // ========================================
+    await ctx.reply('🔄 Step 3/5: Memicu opsi upload dokumen...');
+    
+    const triggerResult = await automation.triggerDocumentUpload();
+    
+    if (triggerResult.triggered) {
+      logger.info('Document upload triggered', { 
+        method: triggerResult.method, 
+        userId: ctx.from.id 
+      });
+      await ctx.reply(`✅ Upload dokumen siap!`);
+    } else {
+      logger.warn('Failed to trigger upload, trying direct upload', { userId: ctx.from.id });
+      await ctx.reply('⚠️ Mencoba upload langsung...');
+    }
 
-    await ctx.reply('📝 Step 4/7: Mengisi data pribadi...');
-    await automation.fillPersonalInfo({
-      firstName: session.data.firstName,
-      lastName: session.data.lastName,
-      birthDate: session.data.birthDate,
-      email: session.data.email
-    });
-    logger.info('Personal info filled', { userId: ctx.from.id });
-
-    await ctx.reply('📤 Step 5/7: Mengirim formulir...');
-    await automation.submitForm();
-    logger.info('Form submitted', { userId: ctx.from.id });
-
-    await ctx.reply('🔄 Step 6/7: Memicu opsi upload dokumen...');
-    await automation.clickPortalLoginAndBack();
-    logger.info('Portal clicked and returned', { userId: ctx.from.id });
-
-    await ctx.reply('🎓 Step 7/7: Generate & upload student ID...');
+    // ========================================
+    // STEP 4: Generate & Upload Student ID
+    // ========================================
+    await ctx.reply('🎓 Step 4/5: Generate student ID...');
+    
     const studentIdResult = await studentIdGen.generate({
       firstName: session.data.firstName,
       lastName: session.data.lastName,
@@ -536,40 +594,44 @@ async function startVerificationProcess(ctx, session) {
       throw new Error('Failed to generate student ID');
     }
 
-    logger.info('Student ID generated', {
-      userId: ctx.from.id,
-      country: session.data.country,
-      countryId: session.data.countryId
-    });
+    logger.info('Student ID generated', { userId: ctx.from.id });
 
     await ctx.replyWithPhoto(
       { source: studentIdResult.buffer },
-      { caption: `✅ Student ID Card berhasil di-generate!\n🌍 Country: ${session.data.countryName}` }
+      { caption: `✅ Student ID berhasil di-generate!\n🌍 ${session.data.countryName}` }
     );
 
+    await ctx.reply('📤 Uploading student ID...');
     await automation.uploadDocument(studentIdResult.buffer);
     logger.info('Document uploaded', { userId: ctx.from.id });
 
-    await ctx.reply('⏳ Menunggu konfirmasi...');
-    await automation.page.waitForTimeout(5000);
+    // ========================================
+    // STEP 5: Check Status
+    // ========================================
+    await ctx.reply('⏳ Step 5/5: Mengecek status verifikasi...');
+    await automation.page.waitForTimeout(3000);
 
     const verificationStatus = await automation.checkVerificationStatus();
     status = verificationStatus.status;
     message = verificationStatus.message;
 
+    // Screenshot hasil
     const screenshotPath = `/tmp/verification_${ctx.from.id}_${Date.now()}.png`;
     await automation.screenshot(screenshotPath);
 
     try {
       await ctx.replyWithPhoto(
-        { source: require('fs').readFileSync(screenshotPath) },
+        { source: fs.readFileSync(screenshotPath) },
         { caption: '📸 Screenshot hasil verifikasi' }
       );
-      require('fs').unlinkSync(screenshotPath);
+      fs.unlinkSync(screenshotPath);
     } catch (e) {
       logger.warn('Failed to send screenshot', { error: e.message });
     }
 
+    // ========================================
+    // Result Message
+    // ========================================
     const statusEmoji = {
       'success': '✅',
       'pending': '⏳',
@@ -587,20 +649,26 @@ Negara: ${session.data.countryName}
 Verification ID: ${session.data.verificationId}
 `;
 
-    await ctx.replyWithMarkdown(resultMessage);
+    await ctx.reply(resultMessage, { parseMode: 'Markdown' });
 
-    database.saveVerification(ctx.from.id, ctx.from.username, {
-      status: status,
-      message: message,
-      firstName: session.data.firstName,
-      lastName: session.data.lastName,
-      email: session.data.email,
-      universityName: session.data.universityName,
-      country: session.data.country,
-      countryName: session.data.countryName,
-      verificationId: session.data.verificationId
-    });
+    // Save to database
+    try {
+      database.saveVerification(ctx.from.id, ctx.from.username, {
+        status: status,
+        message: message,
+        firstName: session.data.firstName,
+        lastName: session.data.lastName,
+        email: session.data.email,
+        universityName: session.data.universityName,
+        country: session.data.country,
+        countryName: session.data.countryName,
+        verificationId: session.data.verificationId
+      });
+    } catch (dbError) {
+      logger.error('Failed to save to database', { error: dbError.message });
+    }
 
+    // Notify admins
     await notifyAdmins(
       `📊 New Verification\n\n` +
       `User: ${ctx.from.username || ctx.from.id}\n` +
@@ -623,19 +691,24 @@ Verification ID: ${session.data.verificationId}
       `❌ *Verifikasi Gagal*\n\n` +
       `Error: ${error.message}\n\n` +
       `Silakan coba lagi dengan /verify`,
-      { parse_mode: 'Markdown' }
+      { parseMode: 'Markdown' }
     );
 
-    database.saveVerification(ctx.from.id, ctx.from.username, {
-      status: 'failed',
-      message: error.message,
-      ...session.data
-    });
+    try {
+      database.saveVerification(ctx.from.id, ctx.from.username, {
+        status: 'failed',
+        message: error.message,
+        ...session.data
+      });
+    } catch (dbError) {
+      logger.error('Failed to save failed verification', { error: dbError.message });
+    }
 
   } finally {
     await automation.close();
     session.step = 'idle';
     session.data = {};
+    clearSession(ctx.from.id);
   }
 }
 

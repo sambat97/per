@@ -6,6 +6,7 @@ const database = require('./database');
 const orgSearch = require('./org-search');
 const studentIdGen = require('./student-id-generator');
 const SheerIDAutomation = require('./sheerid-automation');
+const SheerIDAPI = require('./sheerid-api');
 
 const bot = new Telegraf(config.TELEGRAM_BOT_TOKEN);
 const userSessions = new Map();
@@ -532,31 +533,46 @@ Negara: ${session.data.countryName}
 // VERIFICATION PROCESS
 // ============================================
 async function startVerificationProcess(ctx, session) {
+  const api = new SheerIDAPI();
   const automation = new SheerIDAutomation();
   let status = 'failed';
   let message = 'Unknown error';
 
   try {
-    // Step 1: Open Browser
-    await ctx.reply('🌐 Step 1/4: Membuka browser...');
-    await automation.initialize();
-    await automation.openVerificationPage(session.data.url);
-    logger.info('Browser opened', { userId: ctx.from.id });
-
-    // Step 2: Trigger Upload
-    await ctx.reply('🔄 Step 2/4: Memicu opsi upload dokumen...');
-    const triggerResult = await automation.triggerDocumentUpload();
+    // ========================================
+    // STEP 1: Submit Form via API
+    // ========================================
+    await ctx.reply('📝 Step 1/5: Submitting form via API...');
     
-    if (triggerResult.triggered) {
-      logger.info('Upload triggered', { method: triggerResult.method, userId: ctx.from.id });
-      await ctx.reply(`✅ Upload siap! (${triggerResult.method})`);
-    } else {
-      logger.warn('Upload trigger failed', { userId: ctx.from.id });
-      await ctx.reply('⚠️ Mencoba upload langsung...');
+    const apiResult = await api.submitVerification(session.data.verificationId, {
+      firstName: session.data.firstName,
+      lastName: session.data.lastName,
+      email: session.data.email,
+      birthDate: session.data.birthDate,
+      universityId: session.data.universityId,
+      universityName: session.data.universityName
+    });
+
+    if (!apiResult.success) {
+      throw new Error(`API submission failed: ${apiResult.error}`);
     }
 
-    // Step 3: Generate Student ID
-    await ctx.reply('🎓 Step 3/4: Generate student ID card...');
+    logger.info('API submission successful', { 
+      userId: ctx.from.id,
+      currentStep: apiResult.currentStep,
+      awaitingStep: apiResult.awaitingStep
+    });
+
+    await ctx.reply(
+      `✅ Form submitted!\n\n` +
+      `Current Step: ${apiResult.currentStep}\n` +
+      `Awaiting: ${apiResult.awaitingStep || 'N/A'}`
+    );
+
+    // ========================================
+    // STEP 2: Generate Student ID
+    // ========================================
+    await ctx.reply('🎓 Step 2/5: Generating student ID card...');
     
     const studentIdResult = await studentIdGen.generate({
       firstName: session.data.firstName,
@@ -577,11 +593,59 @@ async function startVerificationProcess(ctx, session) {
 
     await ctx.replyWithPhoto(
       { source: studentIdResult.buffer },
-      { caption: `✅ Student ID berhasil di-generate!\n🎓 ${session.data.universityName}\n🌍 ${session.data.countryName}` }
+      { caption: `✅ Student ID generated!\n🎓 ${session.data.universityName}\n🌍 ${session.data.countryName}` }
     );
 
-    // Step 4: Upload Document
-    await ctx.reply('📤 Step 4/4: Uploading document...');
+    // ========================================
+    // STEP 3: Open Browser
+    // ========================================
+    await ctx.reply('🌐 Step 3/5: Opening browser...');
+    await automation.initialize();
+    await automation.openVerificationPage(session.data.url);
+    logger.info('Browser opened', { userId: ctx.from.id });
+
+    // ========================================
+    // STEP 4: Handle based on awaitingStep
+    // ========================================
+    await ctx.reply('🔍 Step 4/5: Checking verification flow...');
+
+    const awaitingStep = apiResult.awaitingStep?.toLowerCase();
+    const currentStep = apiResult.currentStep?.toLowerCase();
+
+    logger.info('Determining flow', { awaitingStep, currentStep });
+
+    // Check if SSO flow is needed
+    if (awaitingStep === 'sso' || currentStep === 'sso') {
+      logger.info('SSO flow detected');
+      await ctx.reply('🔐 SSO detected, handling Portal → Back flow...');
+      
+      await automation.handleSSOFlow();
+      await ctx.reply('✅ SSO flow completed, upload should be available');
+      
+    } else {
+      logger.info('Direct upload flow');
+      await ctx.reply('📤 Direct upload flow detected');
+      
+      // Check if upload input already visible
+      const uploadVisible = await automation.isUploadInputVisible();
+      
+      if (!uploadVisible) {
+        logger.warn('Upload not visible, trying SSO flow anyway');
+        await ctx.reply('⚠️ Upload not visible, trying SSO flow...');
+        
+        try {
+          await automation.handleSSOFlow();
+        } catch (ssoError) {
+          logger.warn('SSO flow failed', { error: ssoError.message });
+        }
+      }
+    }
+
+    // ========================================
+    // STEP 5: Upload Document
+    // ========================================
+    await ctx.reply('📤 Step 5/5: Uploading document...');
+    
     await automation.uploadDocument(studentIdResult.buffer);
     logger.info('Document uploaded', { userId: ctx.from.id });
 
@@ -622,17 +686,13 @@ Verification ID: ${session.data.verificationId}
 
     await ctx.reply(resultMessage, { parse_mode: 'Markdown' });
 
-    // Save database
+    // Save & notify
     try {
-      database.saveVerification(ctx.from.id, ctx.from.username, {
-        status, message,
-        ...session.data
-      });
+      database.saveVerification(ctx.from.id, ctx.from.username, { status, message, ...session.data });
     } catch (dbError) {
-      logger.error('Database save failed', { error: dbError.message });
+      logger.error('Database save failed');
     }
 
-    // Notify admins
     await notifyAdmins(
       `📊 New Verification\n\n` +
       `User: ${ctx.from.username || ctx.from.id}\n` +
@@ -644,9 +704,7 @@ Verification ID: ${session.data.verificationId}
 
     logger.info('Verification completed', {
       userId: ctx.from.id,
-      username: ctx.from.username,
-      status: status,
-      university: session.data.universityName
+      status: status
     });
 
   } catch (error) {
@@ -667,9 +725,7 @@ Verification ID: ${session.data.verificationId}
         message: error.message,
         ...session.data
       });
-    } catch (dbError) {
-      logger.error('Failed to save error to database');
-    }
+    } catch (dbError) {}
 
   } finally {
     await automation.close();

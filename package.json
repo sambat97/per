@@ -5,15 +5,14 @@
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "dev": "nodemon bot.js",
-    "build": "npx playwright install chromium --with-deps"
+    "dev": "nodemon bot.js"
   },
   "keywords": ["telegram", "bot", "sheerid", "verification"],
   "author": "Your Name",
   "license": "MIT",
   "dependencies": {
     "telegraf": "^4.16.3",
-    "playwright": "1.57.0",
+    "playwright": "^1.48.0",
     "axios": "^1.6.7",
     "dotenv": "^16.4.1",
     "date-fns": "^3.3.1"

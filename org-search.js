@@ -1,57 +1,59 @@
 const axios = require('axios');
-const config = require('./config');
 const logger = require('./logger');
 
 class OrganizationSearch {
+  constructor() {
+    this.baseURL = 'https://orgsearch.sheerid.net/rest/organization/search';
+  }
+
   async search(accountId, query, country = 'US') {
     try {
       logger.info('Searching organizations', { query, country, accountId });
-      
-      const response = await axios.get(config.SHEERID_ORG_SEARCH_URL, {
-        params: {
-          accountId: accountId,
-          country: country,
-          format: 'detailed',
-          name: query,
-          tags: 'HEI,qualifying_ps',
-          type: 'UNIVERSITY,POST_SECONDARY'
-        },
-        timeout: 10000
+
+      const params = {
+        accountId: accountId,
+        country: country,
+        format: 'detailed',
+        name: query,
+        tags: 'HEI,qualifying_ps',
+        type: 'UNIVERSITY,POST_SECONDARY'
+      };
+
+      const response = await axios.get(this.baseURL, {
+        params: params,
+        timeout: 15000,
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
       });
 
-      const organizations = response.data;
-      logger.success(`Found ${organizations.length} organizations for country ${country}`);
-      
-      return organizations;
+      const organizations = response.data || [];
+
+      if (organizations.length === 0) {
+        logger.warn('No organizations found', { query, country });
+        return [];
+      }
+
+      // Filter hanya UNIVERSITY dan POST_SECONDARY
+      const filtered = organizations.filter(org => 
+        org.type === 'UNIVERSITY' || org.type === 'POST_SECONDARY'
+      );
+
+      logger.success(`✅ Found ${filtered.length} organizations for country ${country}`);
+
+      return filtered;
+
     } catch (error) {
-      logger.error('Organization search failed', { 
+      logger.error('❌ Organization search failed', {
         error: error.message,
-        country,
-        accountId,
-        query
+        country: country,
+        accountId: accountId,
+        query: query
       });
+
       throw new Error(`Gagal mencari universitas di ${country}. Silakan coba lagi.`);
     }
-  }
-
-  formatOrganizationsList(organizations) {
-    if (!organizations || organizations.length === 0) {
-      return 'Tidak ada universitas ditemukan.';
-    }
-
-    return organizations.slice(0, 10).map((org, index) => {
-      const location = org.city && org.state 
-        ? `${org.city}, ${org.state}` 
-        : org.city || org.state || '';
-      return `${index + 1}. ${org.name}${location ? ` (${location})` : ''}`;
-    }).join('\n');
-  }
-
-  getOrganizationById(organizations, index) {
-    if (index < 0 || index >= organizations.length) {
-      return null;
-    }
-    return organizations[index];
   }
 }
 

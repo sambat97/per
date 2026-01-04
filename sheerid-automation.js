@@ -11,7 +11,7 @@ class SheerIDAutomation {
 
   async initialize() {
     try {
-      logger.info('Initializing Playwright browser...');
+      logger.info('Initializing browser for document upload...');
       
       this.browser = await chromium.launch({
         headless: config.HEADLESS,
@@ -39,14 +39,11 @@ class SheerIDAutomation {
     }
   }
 
-  async navigateToVerificationURL(url) {
+  async navigateToVerificationPage(url) {
     try {
-      logger.info('Navigating to verification URL');
+      logger.info('Opening verification page');
       await this.page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
       await this.page.waitForLoadState('domcontentloaded');
-      
-      // Screenshot untuk debug
-      await this.debugScreenshot('after_navigation');
       
       logger.success('Page loaded');
     } catch (error) {
@@ -55,295 +52,35 @@ class SheerIDAutomation {
     }
   }
 
-  async selectUniversity(universityName) {
+  /**
+   * Trigger upload document by clicking Portal Login → Back
+   */
+  async triggerDocumentUpload() {
     try {
-      logger.info('Attempting to select university', { universityName });
+      logger.info('Attempting to trigger document upload option...');
 
-      // Screenshot before selection
-      await this.debugScreenshot('before_university_selection');
+      // Screenshot awal
+      await this.screenshot('/tmp/before_trigger.png');
 
-      // Log semua input fields untuk debugging
-      const allInputs = await this.page.evaluate(() => {
-        const inputs = Array.from(document.querySelectorAll('input'));
-        return inputs.map(input => ({
-          name: input.name,
-          id: input.id,
-          placeholder: input.placeholder,
-          type: input.type,
-          className: input.className,
-          value: input.value
-        }));
-      });
-      logger.info('All input fields on page', { count: allInputs.length, inputs: allInputs });
-
-      // Cek apakah universitas sudah terisi
-      const prefilledValue = await this.page.evaluate(() => {
-        const orgInput = document.querySelector('input[name="organization"]') ||
-                        document.querySelector('input[id*="organi"]') ||
-                        document.querySelector('input[placeholder*="university"]') ||
-                        document.querySelector('input[placeholder*="school"]');
-        return orgInput ? orgInput.value : null;
-      });
-
-      if (prefilledValue && prefilledValue.length > 0) {
-        logger.info('University field already filled', { value: prefilledValue });
-        return;
-      }
-
-      // Try multiple selectors
-      const selectors = [
-        'input[name="organization"]',
-        'input[id="organization"]',
-        'input[placeholder*="university" i]',
-        'input[placeholder*="school" i]',
-        'input[placeholder*="organisation" i]',
-        '[data-testid="university-input"]',
-        'input[type="text"]',
-        'input[type="search"]'
-      ];
-
-      let inputElement = null;
-      let foundSelector = null;
-
-      for (const selector of selectors) {
-        try {
-          inputElement = await this.page.waitForSelector(selector, { timeout: 5000 });
-          if (inputElement) {
-            foundSelector = selector;
-            logger.info('Found university input', { selector });
-            break;
-          }
-        } catch (e) {
-          continue;
-        }
-      }
-
-      if (!inputElement) {
-        logger.warn('University input field not found, checking if form is already complete');
-        await this.debugScreenshot('university_input_not_found');
-        
-        // Check if we can proceed without selecting university
-        const continueButton = await this.page.$('button[type="submit"], button:has-text("Continue"), button:has-text("Next")');
-        if (continueButton) {
-          logger.info('Form appears ready, skipping university selection');
-          return;
-        }
-        
-        throw new Error('University input field not found and cannot continue');
-      }
-
-      // Click input field
-      await inputElement.click();
-      await this.page.waitForTimeout(500);
-
-      // Clear and type university name
-      await inputElement.fill('');
-      await this.page.waitForTimeout(300);
-      
-      // Type slowly to trigger autocomplete
-      for (const char of universityName) {
-        await inputElement.type(char, { delay: 100 });
-      }
-
-      logger.info('Typed university name, waiting for dropdown');
-      await this.page.waitForTimeout(2000);
-
-      // Screenshot after typing
-      await this.debugScreenshot('after_typing_university');
-
-      // Try to find and click dropdown option
-      const dropdownSelectors = [
-        'div[role="option"]:first-child',
-        'li[role="option"]:first-child',
-        '.dropdown-item:first-child',
-        '.autocomplete-option:first-child',
-        '[data-testid="university-option"]:first-child',
-        '.organization-option:first-child',
-        'ul[role="listbox"] li:first-child'
-      ];
-
-      let optionClicked = false;
-      for (const selector of dropdownSelectors) {
-        try {
-          const option = await this.page.waitForSelector(selector, { timeout: 3000 });
-          if (option) {
-            await option.click();
-            logger.success('University option clicked', { selector });
-            optionClicked = true;
-            break;
-          }
-        } catch (e) {
-          continue;
-        }
-      }
-
-      if (!optionClicked) {
-        logger.warn('No dropdown option found, pressing Enter');
-        await this.page.keyboard.press('Enter');
-        await this.page.waitForTimeout(1000);
-      }
-
-      await this.page.waitForLoadState('domcontentloaded');
-      await this.debugScreenshot('after_university_selection');
-      
-      logger.success('University selection completed');
-
-    } catch (error) {
-      logger.error('Failed to select university', { error: error.message });
-      await this.debugScreenshot('university_selection_error');
-      
-      // Don't throw error, try to continue
-      logger.warn('Continuing despite university selection error...');
-    }
-  }
-
-  async fillPersonalInfo(data) {
-    try {
-      logger.info('Filling personal information form');
-      await this.debugScreenshot('before_filling_personal_info');
-
-      // First name
-      await this.fillField(
-        ['input[name="firstName"]', 'input#firstName', '[data-testid="first-name"]', 'input[placeholder*="First" i]'],
-        data.firstName,
-        'First name'
-      );
-
-      // Last name
-      await this.fillField(
-        ['input[name="lastName"]', 'input#lastName', '[data-testid="last-name"]', 'input[placeholder*="Last" i]'],
-        data.lastName,
-        'Last name'
-      );
-
-      // Birth date
-      if (data.birthDate) {
-        await this.fillBirthDate(data.birthDate);
-      }
-
-      // Email
-      await this.fillField(
-        ['input[name="email"]', 'input[type="email"]', '[data-testid="email"]', 'input[placeholder*="email" i]'],
-        data.email,
-        'Email'
-      );
-
-      await this.page.waitForLoadState('networkidle');
-      await this.debugScreenshot('after_filling_personal_info');
-      
-      logger.success('Personal info filled');
-
-    } catch (error) {
-      logger.error('Failed to fill personal info', { error: error.message });
-      await this.debugScreenshot('personal_info_error');
-      throw error;
-    }
-  }
-
-  async fillField(selectors, value, fieldName) {
-    for (const selector of selectors) {
-      try {
-        const element = await this.page.waitForSelector(selector, { timeout: 5000 });
-        if (element) {
-          await element.fill(value);
-          logger.debug(`Filled ${fieldName}`, { selector });
-          return;
-        }
-      } catch (e) {
-        continue;
-      }
-    }
-    throw new Error(`Could not find field: ${fieldName}`);
-  }
-
-  async fillBirthDate(birthDate) {
-    try {
-      const birthParts = birthDate.split('-');
-      
-      // Try single date input
-      const dateInput = await this.page.$('input[name="birthDate"], input[type="date"]');
-      if (dateInput) {
-        await dateInput.fill(birthDate);
-        logger.debug('Filled birth date (single field)');
-        return;
-      }
-
-      // Try separate fields
-      const dayField = await this.page.$('select[name="birthDay"], input[name="day"]');
-      const monthField = await this.page.$('select[name="birthMonth"], select[name="month"]');
-      const yearField = await this.page.$('input[name="birthYear"], input[name="year"]');
-
-      if (dayField && monthField && yearField) {
-        await dayField.fill(birthParts[2]);
-        await monthField.selectOption(birthParts[1]);
-        await yearField.fill(birthParts[0]);
-        logger.debug('Filled birth date (separate fields)');
-        return;
-      }
-
-      logger.warn('Birth date field not found, skipping');
-    } catch (error) {
-      logger.warn('Failed to fill birth date', { error: error.message });
-    }
-  }
-
-  async submitForm() {
-    try {
-      logger.info('Submitting form');
-      await this.debugScreenshot('before_submit');
-
-      const submitSelectors = [
-        'button[type="submit"]',
-        'button:has-text("Submit")',
-        'button:has-text("Verify")',
-        'button:has-text("Continue")',
-        'button:has-text("Next")',
-        '[data-testid="submit-button"]'
-      ];
-
-      for (const selector of submitSelectors) {
-        try {
-          const button = await this.page.waitForSelector(selector, { timeout: 5000 });
-          if (button) {
-            await button.click();
-            logger.info('Submit button clicked', { selector });
-            break;
-          }
-        } catch (e) {
-          continue;
-        }
-      }
-
-      await this.page.waitForLoadState('networkidle', { timeout: 30000 });
-      await this.debugScreenshot('after_submit');
-      
-      logger.success('Form submitted');
-
-    } catch (error) {
-      logger.error('Failed to submit form', { error: error.message });
-      await this.debugScreenshot('submit_error');
-      throw error;
-    }
-  }
-
-  async clickPortalLoginAndBack() {
-    try {
-      logger.info('Looking for portal login button...');
-      await this.debugScreenshot('looking_for_portal');
-
+      // Cari tombol Portal/Login
       const portalSelectors = [
         'button:has-text("Portal")',
         'a:has-text("Portal")',
+        'button:has-text("Student Portal")',
         'button:has-text("Login")',
-        'a:has-text("Student Portal")',
-        'button:has-text("Student Login")'
+        'a:has-text("Login to Portal")',
+        'button:has-text("Access Portal")',
+        '[data-testid="portal-button"]'
       ];
 
       let portalButton = null;
+      let usedSelector = null;
+
       for (const selector of portalSelectors) {
         try {
           portalButton = await this.page.waitForSelector(selector, { timeout: 5000 });
           if (portalButton) {
+            usedSelector = selector;
             logger.info('Portal button found', { selector });
             break;
           }
@@ -352,84 +89,43 @@ class SheerIDAutomation {
         }
       }
 
-      if (portalButton) {
-        logger.info('Clicking portal button...');
-        await portalButton.click();
-        await this.page.waitForLoadState('domcontentloaded');
-        await this.debugScreenshot('after_portal_click');
-
-        // Click back
-        const backSelectors = [
-          'button:has-text("Back")',
-          'button:has-text("Kembali")',
-          'button:has-text("Return")',
-          'a:has-text("Back")'
-        ];
-
-        for (const selector of backSelectors) {
-          try {
-            const backButton = await this.page.waitForSelector(selector, { timeout: 3000 });
-            if (backButton) {
-              await backButton.click();
-              logger.info('Back button clicked');
-              break;
-            }
-          } catch (e) {
-            continue;
-          }
+      if (!portalButton) {
+        logger.warn('Portal button not found, checking if upload already visible');
+        
+        // Cek apakah upload sudah langsung muncul
+        const uploadInput = await this.page.$('input[type="file"]');
+        if (uploadInput) {
+          logger.info('Upload input already visible, skipping portal flow');
+          return { triggered: true, method: 'already_visible' };
         }
 
-        await this.page.waitForLoadState('networkidle');
-        logger.success('Portal flow completed');
-        return true;
+        return { triggered: false, method: 'portal_not_found' };
       }
 
-      logger.warn('Portal button not found, skipping');
-      return false;
-
-    } catch (error) {
-      logger.warn('Portal flow skipped', { error: error.message });
-      return false;
-    }
-  }
-
-  async uploadDocument(imageBuffer) {
-    const tempFilePath = `/tmp/student_id_${Date.now()}.png`;
-    
-    try {
-      logger.info('Uploading document...');
-      await this.debugScreenshot('before_upload');
-
-      const fileInput = await this.page.waitForSelector('input[type="file"]', { timeout: 15000 });
-
-      // Write temp file
-      fs.writeFileSync(tempFilePath, imageBuffer);
-      logger.debug('Temp file created', { path: tempFilePath });
-
-      // Upload file
-      await fileInput.setInputFiles(tempFilePath);
+      // Klik Portal button
+      logger.info('Clicking portal button...');
+      await portalButton.click();
+      await this.page.waitForLoadState('domcontentloaded');
       await this.page.waitForTimeout(2000);
-      await this.debugScreenshot('after_file_selected');
+      
+      await this.screenshot('/tmp/after_portal_click.png');
 
-      logger.success('Document file selected');
-
-      // Try to find and click submit button
-      const submitSelectors = [
-        'button[type="submit"]:has-text("Submit")',
-        'button:has-text("Upload")',
-        'button:has-text("Complete")',
-        'button:has-text("Done")',
-        'button:has-text("Finish")'
+      // Klik tombol Back/Kembali
+      const backSelectors = [
+        'button:has-text("Back")',
+        'button:has-text("Kembali")',
+        'button:has-text("Return")',
+        'button:has-text("Cancel")',
+        'a:has-text("Back")',
+        '[data-testid="back-button"]'
       ];
 
-      let submitted = false;
-      for (const selector of submitSelectors) {
+      let backButton = null;
+      for (const selector of backSelectors) {
         try {
-          const submitBtn = await this.page.waitForSelector(selector, { timeout: 3000 });
-          if (submitBtn) {
-            await submitBtn.click();
-            logger.info('Upload submit button clicked', { selector });
-            submitted = true;
+          backButton = await this.page.waitForSelector(selector, { timeout: 5000 });
+          if (backButton) {
+            logger.info('Back button found', { selector });
             break;
           }
         } catch (e) {
@@ -437,88 +133,159 @@ class SheerIDAutomation {
         }
       }
 
-      if (submitted) {
+      if (backButton) {
+        logger.info('Clicking back button...');
+        await backButton.click();
         await this.page.waitForLoadState('networkidle');
-        await this.debugScreenshot('after_upload_submit');
-        logger.success('Upload submitted');
-      } else {
-        logger.warn('Upload submit button not found, document may auto-submit');
+        await this.page.waitForTimeout(2000);
+        
+        await this.screenshot('/tmp/after_back_click.png');
+        logger.success('Portal → Back flow completed');
+        
+        return { triggered: true, method: 'portal_back_flow' };
       }
+
+      logger.warn('Back button not found, trying browser back');
+      await this.page.goBack();
+      await this.page.waitForLoadState('networkidle');
+      
+      return { triggered: true, method: 'browser_back' };
+
+    } catch (error) {
+      logger.error('Failed to trigger document upload', { error: error.message });
+      return { triggered: false, error: error.message };
+    }
+  }
+
+  /**
+   * Upload document (student ID card)
+   */
+  async uploadDocument(imageBuffer) {
+    const tempFilePath = `/tmp/student_id_${Date.now()}.png`;
+    
+    try {
+      logger.info('Looking for file upload input...');
+
+      // Wait for file input
+      const fileInput = await this.page.waitForSelector('input[type="file"]', { timeout: 15000 });
+      
+      if (!fileInput) {
+        throw new Error('File upload input not found');
+      }
+
+      logger.info('File input found, uploading document...');
+
+      // Write temp file
+      fs.writeFileSync(tempFilePath, imageBuffer);
+      logger.debug('Temp file created', { size: imageBuffer.length });
+
+      // Upload
+      await fileInput.setInputFiles(tempFilePath);
+      await this.page.waitForTimeout(2000);
+      
+      await this.screenshot('/tmp/after_file_upload.png');
+      logger.success('Document uploaded');
+
+      // Cari dan klik submit button (kalau ada)
+      const submitSelectors = [
+        'button[type="submit"]',
+        'button:has-text("Submit")',
+        'button:has-text("Upload")',
+        'button:has-text("Done")',
+        'button:has-text("Complete")',
+        'button:has-text("Finish")'
+      ];
+
+      for (const selector of submitSelectors) {
+        try {
+          const submitBtn = await this.page.waitForSelector(selector, { timeout: 3000 });
+          if (submitBtn) {
+            logger.info('Submit button found, clicking...', { selector });
+            await submitBtn.click();
+            await this.page.waitForLoadState('networkidle');
+            await this.screenshot('/tmp/after_submit.png');
+            logger.success('Upload submitted');
+            break;
+          }
+        } catch (e) {
+          continue;
+        }
+      }
+
+      return { success: true };
 
     } catch (error) {
       logger.error('Failed to upload document', { error: error.message });
-      await this.debugScreenshot('upload_error');
+      await this.screenshot('/tmp/upload_error.png');
       throw error;
     } finally {
-      // Cleanup temp file
+      // Cleanup
       if (fs.existsSync(tempFilePath)) {
         try {
           fs.unlinkSync(tempFilePath);
-          logger.debug('Temp file cleaned up', { path: tempFilePath });
-        } catch (cleanupError) {
-          logger.warn('Failed to cleanup temp file', { error: cleanupError.message });
+          logger.debug('Temp file cleaned up');
+        } catch (e) {
+          logger.warn('Failed to cleanup temp file', { error: e.message });
         }
       }
     }
   }
 
+  /**
+   * Check verification status from page
+   */
   async checkVerificationStatus() {
     try {
-      await this.debugScreenshot('checking_status');
+      await this.screenshot('/tmp/status_check.png');
 
-      // Success indicators
-      const successIndicators = [
-        'text=/success/i',
+      // Success patterns
+      const successPatterns = [
         'text=/verified/i',
+        'text=/success/i',
         'text=/approved/i',
-        'text=/complete/i',
-        '[data-testid="success-message"]'
+        'text=/complete/i'
       ];
 
-      for (const selector of successIndicators) {
-        const element = await this.page.$(selector);
+      for (const pattern of successPatterns) {
+        const element = await this.page.$(pattern);
         if (element) {
           const text = await element.textContent();
-          logger.info('Success indicator found', { text });
-          return { status: 'success', message: 'Verification successful!' };
+          return { status: 'success', message: text.trim() };
         }
       }
 
-      // Pending indicators
-      const pendingIndicators = [
+      // Pending patterns
+      const pendingPatterns = [
         'text=/pending/i',
         'text=/review/i',
         'text=/processing/i',
-        'text=/submitted/i'
+        'text=/under review/i'
       ];
 
-      for (const selector of pendingIndicators) {
-        const element = await this.page.$(selector);
+      for (const pattern of pendingPatterns) {
+        const element = await this.page.$(pattern);
         if (element) {
           const text = await element.textContent();
-          logger.info('Pending indicator found', { text });
-          return { status: 'pending', message: 'Verification pending review' };
+          return { status: 'pending', message: text.trim() };
         }
       }
 
-      // Error indicators
-      const errorIndicators = [
-        'text=/error/i',
+      // Failed patterns
+      const failedPatterns = [
         'text=/failed/i',
         'text=/rejected/i',
+        'text=/error/i',
         'text=/invalid/i'
       ];
 
-      for (const selector of errorIndicators) {
-        const element = await this.page.$(selector);
+      for (const pattern of failedPatterns) {
+        const element = await this.page.$(pattern);
         if (element) {
           const text = await element.textContent();
-          logger.info('Error indicator found', { text });
-          return { status: 'failed', message: text };
+          return { status: 'failed', message: text.trim() };
         }
       }
 
-      logger.warn('No status indicator found');
       return { status: 'unknown', message: 'Status tidak dapat ditentukan' };
 
     } catch (error) {
@@ -532,17 +299,7 @@ class SheerIDAutomation {
       await this.page.screenshot({ path: filename, fullPage: true });
       logger.info(`Screenshot saved: ${filename}`);
     } catch (error) {
-      logger.error('Screenshot failed', { error: error.message });
-    }
-  }
-
-  async debugScreenshot(label) {
-    try {
-      const filename = `/tmp/debug_${label}_${Date.now()}.png`;
-      await this.page.screenshot({ path: filename, fullPage: true });
-      logger.debug(`Debug screenshot: ${filename}`);
-    } catch (error) {
-      // Ignore debug screenshot errors
+      logger.warn('Screenshot failed', { error: error.message });
     }
   }
 

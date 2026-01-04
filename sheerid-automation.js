@@ -15,12 +15,7 @@ class SheerIDAutomation {
       
       this.browser = await chromium.launch({
         headless: config.HEADLESS,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu'
-        ]
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
       });
 
       const context = await this.browser.newContext({
@@ -31,9 +26,9 @@ class SheerIDAutomation {
       this.page = await context.newPage();
       this.page.setDefaultTimeout(30000);
 
-      logger.success('Browser initialized');
+      logger.success('✅ Browser initialized');
     } catch (error) {
-      logger.error('Browser init failed', { error: error.message });
+      logger.error('❌ Browser init failed', { error: error.message });
       throw error;
     }
   }
@@ -45,36 +40,35 @@ class SheerIDAutomation {
       await this.page.waitForTimeout(3000);
       
       await this.screenshot('/tmp/01_page_opened.png');
-      logger.success('Page opened');
+      logger.success('✅ Page opened');
     } catch (error) {
-      logger.error('Page open failed', { error: error.message });
+      logger.error('❌ Page open failed', { error: error.message });
       throw error;
     }
   }
 
-  /**
-   * Trigger document upload via Portal → Back
-   */
   async triggerDocumentUpload() {
     try {
       logger.info('Triggering document upload');
       await this.screenshot('/tmp/02_before_trigger.png');
+      await this.page.waitForTimeout(2000);
 
       // Check if upload already visible
-      await this.page.waitForTimeout(2000);
       const uploadInput = await this.page.$('input[type="file"]');
       if (uploadInput) {
-        logger.info('Upload already visible');
+        logger.info('✅ Upload already visible');
         return { triggered: true, method: 'already_visible' };
       }
 
-      // Look for Portal button
+      // Look for Portal/SSO button
       const portalSelectors = [
         'button:has-text("Portal")',
         'a:has-text("Portal")',
         'button:has-text("Student Portal")',
         'button:has-text("Login")',
-        'a:has-text("Student Login")'
+        'a:has-text("Student Login")',
+        'button:has-text("Access")',
+        'a[href*="sso"]'
       ];
 
       let portalButton = null;
@@ -82,7 +76,7 @@ class SheerIDAutomation {
         try {
           portalButton = await this.page.waitForSelector(selector, { timeout: 5000 });
           if (portalButton) {
-            logger.info('Portal button found', { selector });
+            logger.info('✅ Portal button found', { selector });
             break;
           }
         } catch (e) {
@@ -96,11 +90,11 @@ class SheerIDAutomation {
         await this.page.waitForTimeout(2000);
         await this.screenshot('/tmp/03_after_portal_click.png');
 
-        // Click back
-        const backButton = await this.page.$('button:has-text("Back"), button:has-text("Kembali"), a:has-text("Back")');
+        // Click back/cancel
+        const backButton = await this.page.$('button:has-text("Back"), button:has-text("Cancel"), button:has-text("Kembali"), a:has-text("Back")');
         if (backButton) {
           await backButton.click();
-          logger.info('Back button clicked');
+          logger.info('✅ Back clicked');
         } else {
           await this.page.goBack();
           logger.info('Browser back');
@@ -112,18 +106,15 @@ class SheerIDAutomation {
         return { triggered: true, method: 'portal_back' };
       }
 
-      logger.warn('Portal button not found');
+      logger.warn('⚠️ Portal button not found');
       return { triggered: false };
 
     } catch (error) {
-      logger.error('Trigger failed', { error: error.message });
+      logger.error('❌ Trigger failed', { error: error.message });
       return { triggered: false, error: error.message };
     }
   }
 
-  /**
-   * Upload document
-   */
   async uploadDocument(imageBuffer) {
     const tempFilePath = `/tmp/student_id_${Date.now()}.png`;
     
@@ -146,7 +137,7 @@ class SheerIDAutomation {
       await this.page.waitForTimeout(3000);
       
       await this.screenshot('/tmp/05_after_upload.png');
-      logger.success('Document uploaded');
+      logger.success('✅ Document uploaded');
 
       // Submit if button exists
       const submitButton = await this.page.$('button[type="submit"], button:has-text("Submit"), button:has-text("Done")');
@@ -160,7 +151,7 @@ class SheerIDAutomation {
       return { success: true };
 
     } catch (error) {
-      logger.error('Upload failed', { error: error.message });
+      logger.error('❌ Upload failed', { error: error.message });
       await this.screenshot('/tmp/error_upload.png');
       throw error;
     } finally {
@@ -209,7 +200,7 @@ class SheerIDAutomation {
         logger.info('Browser closed');
       }
     } catch (error) {
-      logger.error('Browser close failed', { error: error.message });
+      logger.error('❌ Browser close failed', { error: error.message });
     }
   }
 }

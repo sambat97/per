@@ -1,14 +1,13 @@
-# Base image Playwright official
-FROM mcr.microsoft.com/playwright:v1.41.2-jammy
+# Gunakan latest untuk auto-match dengan npm package
+FROM mcr.microsoft.com/playwright:v1.57.0-jammy
 
-# Set working directory
 WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
 
-# UBAH INI: npm ci → npm install
-RUN npm install --omit=dev --no-package-lock
+# Install dependencies
+RUN npm ci --omit=dev
 
 # Copy all files
 COPY . .

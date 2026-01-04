@@ -16,12 +16,16 @@ class SheerIDAPI {
         university: data.universityName
       });
 
+      // ✅ FIX: organization harus object, bukan integer
       const payload = {
         firstName: data.firstName,
         lastName: data.lastName,
         email: data.email,
         birthDate: data.birthDate,
-        organization: data.universityId
+        organization: {
+          id: data.universityId,  // ✅ Wrap dalam object
+          name: data.universityName
+        }
       };
 
       logger.debug('API payload', payload);

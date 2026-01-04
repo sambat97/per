@@ -312,7 +312,7 @@ async function handleURL(ctx, session, text) {
     `🌍 Negara: *${countryName}* (${country})\n` +
     `🆔 Account ID: \`${accountId}\`\n\n` +
     `🏫 Sekarang ketik nama universitas Anda untuk mencari.\n\n` +
-    `Contoh: tilburg university`,
+    `Contoh: universitas brawijaya`,
     { parseMode: 'Markdown' }
   );
 }
@@ -527,36 +527,23 @@ async function startVerificationProcess(ctx, session) {
     // Step 1: Initialize & navigate
     await ctx.reply('🌐 Step 1/5: Membuka browser...');
     await automation.initialize();
-    await automation.navigateToVerificationPage(session.data.url);
-    logger.info('Browser initialized and navigated', { userId: ctx.from.id });
+    await automation.openVerificationPage(session.data.url);
+    logger.info('Browser opened', { userId: ctx.from.id });
 
-    // Step 2: Fill form
-    await ctx.reply('📝 Step 2/5: Mengisi formulir...');
-    await automation.fillCompleteForm({
-      universityName: session.data.universityName,
-      firstName: session.data.firstName,
-      lastName: session.data.lastName,
-      email: session.data.email,
-      birthDate: session.data.birthDate
-    });
-    logger.info('Form filled and submitted', { userId: ctx.from.id });
-
-    // Step 3: Trigger upload
-    await ctx.reply('🔄 Step 3/5: Memicu opsi upload dokumen...');
+    // Step 2: Trigger upload
+    await ctx.reply('🔄 Step 2/5: Memicu opsi upload dokumen...');
     const triggerResult = await automation.triggerDocumentUpload();
-    logger.info('Upload trigger result', { 
-      result: triggerResult, 
-      userId: ctx.from.id 
-    });
-
+    
     if (triggerResult.triggered) {
-      await ctx.reply(`✅ Upload dokumen siap! (${triggerResult.method})`);
+      logger.info('Upload triggered', { method: triggerResult.method, userId: ctx.from.id });
+      await ctx.reply(`✅ Upload siap! (${triggerResult.method})`);
     } else {
-      await ctx.reply('⚠️ Portal tidak ditemukan, mencoba upload langsung...');
+      logger.warn('Upload trigger failed', { userId: ctx.from.id });
+      await ctx.reply('⚠️ Mencoba upload langsung...');
     }
 
-    // Step 4: Generate Student ID
-    await ctx.reply('🎓 Step 4/5: Generate student ID...');
+    // Step 3: Generate Student ID
+    await ctx.reply('🎓 Step 3/5: Generate student ID...');
     
     const studentIdResult = await studentIdGen.generate({
       firstName: session.data.firstName,
@@ -570,23 +557,26 @@ async function startVerificationProcess(ctx, session) {
       throw new Error('Failed to generate student ID');
     }
 
-    logger.info('Student ID generated', { userId: ctx.from.id });
+    logger.info('Student ID generated', { 
+      userId: ctx.from.id,
+      university: session.data.universityName 
+    });
 
     await ctx.replyWithPhoto(
       { source: studentIdResult.buffer },
-      { caption: `✅ Student ID berhasil di-generate!\n🌍 ${session.data.countryName}` }
+      { caption: `✅ Student ID berhasil di-generate!\n🎓 ${session.data.universityName}\n🌍 ${session.data.countryName}` }
     );
 
-    // Step 5: Upload document
-    await ctx.reply('📤 Step 5/5: Uploading student ID...');
+    // Step 4: Upload document
+    await ctx.reply('📤 Step 4/5: Uploading document...');
     await automation.uploadDocument(studentIdResult.buffer);
     logger.info('Document uploaded', { userId: ctx.from.id });
 
-    // Check status
-    await ctx.reply('⏳ Mengecek status verifikasi...');
+    // Step 5: Check status
+    await ctx.reply('⏳ Step 5/5: Checking status...');
     await automation.page.waitForTimeout(3000);
 
-    const verificationStatus = await automation.checkVerificationStatus();
+    const verificationStatus = await automation.checkStatus();
     status = verificationStatus.status;
     message = verificationStatus.message;
 
@@ -601,16 +591,11 @@ async function startVerificationProcess(ctx, session) {
       );
       fs.unlinkSync(screenshotPath);
     } catch (e) {
-      logger.warn('Screenshot send failed', { error: e.message });
+      logger.warn('Screenshot send failed');
     }
 
-    // Result message
-    const statusEmoji = {
-      'success': '✅',
-      'pending': '⏳',
-      'failed': '❌'
-    };
-
+    // Result
+    const statusEmoji = { 'success': '✅', 'pending': '⏳', 'failed': '❌' };
     const resultMessage = `
 ${statusEmoji[status] || '❓'} *Verifikasi ${status.toUpperCase()}*
 
@@ -624,18 +609,11 @@ Verification ID: ${session.data.verificationId}
 
     await ctx.reply(resultMessage, { parseMode: 'Markdown' });
 
-    // Save to database
+    // Save database
     try {
       database.saveVerification(ctx.from.id, ctx.from.username, {
-        status: status,
-        message: message,
-        firstName: session.data.firstName,
-        lastName: session.data.lastName,
-        email: session.data.email,
-        universityName: session.data.universityName,
-        country: session.data.country,
-        countryName: session.data.countryName,
-        verificationId: session.data.verificationId
+        status, message,
+        ...session.data
       });
     } catch (dbError) {
       logger.error('Database save failed', { error: dbError.message });
@@ -654,16 +632,14 @@ Verification ID: ${session.data.verificationId}
     logger.logVerification(ctx.from.id, ctx.from.username, status, session.data);
 
   } catch (error) {
-    logger.error('Verification process failed', {
-      userId: ctx.from.id,
+    logger.error('Verification failed', { 
+      userId: ctx.from.id, 
       error: error.message,
-      stack: error.stack
+      stack: error.stack 
     });
 
     await ctx.reply(
-      `❌ *Verifikasi Gagal*\n\n` +
-      `Error: ${error.message}\n\n` +
-      `Silakan coba lagi dengan /verify`,
+      `❌ *Verifikasi Gagal*\n\nError: ${error.message}\n\nCoba lagi: /verify`,
       { parseMode: 'Markdown' }
     );
 
@@ -674,7 +650,7 @@ Verification ID: ${session.data.verificationId}
         ...session.data
       });
     } catch (dbError) {
-      logger.error('Failed to save failed verification', { error: dbError.message });
+      logger.error('Failed to save error');
     }
 
   } finally {

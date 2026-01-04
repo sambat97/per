@@ -1,4 +1,4 @@
-# Gunakan Playwright official image dengan Node.js
+# Base image Playwright official
 FROM mcr.microsoft.com/playwright:v1.41.0-jammy
 
 # Set working directory
@@ -7,14 +7,15 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies (production only)
-RUN npm ci --only=production
+# Install dependencies (production mode)
+RUN npm ci --omit=dev
 
-# Copy seluruh aplikasi
+# Copy all files
 COPY . .
 
-# Expose port (opsional, untuk health check)
-EXPOSE 3000
+# Healthcheck (optional)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
-# Start bot
+# Start the bot
 CMD ["node", "bot.js"]
